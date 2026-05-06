@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env.local
+.DS_Store
+uv.lock
+dist/
+*.egg-info/

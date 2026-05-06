@@ -1,0 +1,28 @@
+[project]
+name = "opensearch-poc"
+version = "0.1.0"
+description = "OpenSearch dual-cluster migration POC: snapshot/restore + reindex + remote reindex"
+requires-python = ">=3.11"
+dependencies = [
+    "elasticsearch>=7.0.0,<8.0.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.7.0",
+    "click>=8.1.7",
+    "faker>=24.0.0",
+    "boto3>=1.34.0",       # optional: inspect MinIO bucket directly
+]
+
+[project.scripts]
+setup-source      = "scripts.step01_setup_source:main"
+create-snapshot   = "scripts.step02_create_snapshot:main"
+restore-snapshot  = "scripts.step03_restore_snapshot:main"
+reindex-target    = "scripts.step04_reindex_target:main"
+add-delta         = "scripts.step05_add_delta:main"
+remote-reindex    = "scripts.step06_remote_reindex:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["scripts"]
