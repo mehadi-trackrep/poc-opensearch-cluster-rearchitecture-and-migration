@@ -1,35 +1,36 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Two independent Elasticsearch 7.10.2 OSS clusters
+# Two independent OpenSearch 1.3.x (ES-7.10 compatible) clusters
 #
-# SOURCE cluster  →  ES :9200   Kibana :5601
-# TARGET cluster  →  ES :9201   Kibana :5602
+# SOURCE cluster  →  HTTP :9200   Dashboards :5601
+# TARGET cluster  →  HTTP :9201   Dashboards :5602
 #
 # Snapshots → MinIO (:9000) — local S3-compatible store.
-# Every ES node runs config/keystore-entrypoint.sh on startup to inject the
-# S3 credentials into the Elasticsearch keystore (secure settings cannot be
-# passed as plain env vars or in elasticsearch.yml).
+# Every OpenSearch node runs config/keystore-entrypoint.sh on startup to inject
+# S3 credentials into the keystore (secure settings cannot be plain env vars).
 # ─────────────────────────────────────────────────────────────────────────────
 
-x-es-base: &es-base
+x-os-base: &os-base
   build:
     context: .
-    dockerfile: Dockerfile     # elasticsearch-oss:7.10.2 + repository-s3 plugin
-  platform: linux/amd64        # oss:7.10.2 has no arm64 build — use Rosetta on Apple Silicon
+    dockerfile: Dockerfile   # opensearch:1.3.14 + repository-s3 plugin
   entrypoint: ["sh", "/config/keystore-entrypoint.sh"]
   ulimits:
     memlock: { soft: -1, hard: -1 }
     nofile:  { soft: 65536, hard: 65536 }
   restart: unless-stopped
   networks:
-    - es-net
+    - opensearch-net
 
-# Non-secret S3 settings — endpoint/protocol go in elasticsearch.yml via env.
-# The credentials (access_key / secret_key) are injected by keystore-entrypoint.sh.
+x-os-base-env: &os-base-env
+  # Default heap for data nodes; master nodes override this key below.
+  OPENSEARCH_JAVA_OPTS: "-Xms${DATA_HEAP:-256m} -Xmx${DATA_HEAP:-256m}"
+  DISABLE_SECURITY_PLUGIN: "true"
+  DISABLE_INSTALL_DEMO_CONFIG: "true"
+
+# Non-secret S3 settings. Credentials go in the keystore via keystore-entrypoint.sh.
 x-s3-env: &s3-env
-  # Rosetta (linux/amd64 on arm64) cannot install seccomp filters — disable the check.
-  bootstrap.system_call_filter: "false"
-  s3.client.default.endpoint: "minio:9000"       # host:port only, no scheme
-  s3.client.default.path_style_access: "true"    # required for MinIO
+  s3.client.default.endpoint: "http://minio:9000"
+  s3.client.default.path_style_access: "true"
   s3.client.default.protocol: http
   S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
   S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
@@ -49,7 +50,7 @@ volumes:
   minio-data:
 
 networks:
-  es-net:
+  opensearch-net:
     driver: bridge
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -69,7 +70,7 @@ services:
     volumes:
       - minio-data:/data
     networks:
-      - es-net
+      - opensearch-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
@@ -89,16 +90,15 @@ services:
         echo 'Bucket ready'
       "
     networks:
-      - es-net
+      - opensearch-net
 
 # ── SOURCE CLUSTER ────────────────────────────────────────────────────────────
-
   src-master-1:
-    <<: *es-base
+    <<: *os-base
     container_name: src-master-1
     environment:
-      <<: *s3-env
-      ES_JAVA_OPTS: "-Xms${MASTER_HEAP:-192m} -Xmx${MASTER_HEAP:-192m}"
+      <<: [*os-base-env, *s3-env]
+      OPENSEARCH_JAVA_OPTS: "-Xms${MASTER_HEAP:-192m} -Xmx${MASTER_HEAP:-192m}"
       cluster.name: source-cluster
       node.name: src-master-1
       node.master: "true"
@@ -106,20 +106,19 @@ services:
       node.ingest: "false"
       discovery.seed_hosts: "src-master-1,src-master-2"
       cluster.initial_master_nodes: "src-master-1,src-master-2"
-      network.host: "0.0.0.0"
     volumes:
       - ./config/keystore-entrypoint.sh:/config/keystore-entrypoint.sh:ro
-      - src-master-1-data:/usr/share/elasticsearch/data
+      - src-master-1-data:/usr/share/opensearch/data
     depends_on:
       minio:
         condition: service_healthy
 
   src-master-2:
-    <<: *es-base
+    <<: *os-base
     container_name: src-master-2
     environment:
-      <<: *s3-env
-      ES_JAVA_OPTS: "-Xms${MASTER_HEAP:-192m} -Xmx${MASTER_HEAP:-192m}"
+      <<: [*os-base-env, *s3-env]
+      OPENSEARCH_JAVA_OPTS: "-Xms${MASTER_HEAP:-192m} -Xmx${MASTER_HEAP:-192m}"
       cluster.name: source-cluster
       node.name: src-master-2
       node.master: "true"
@@ -127,20 +126,18 @@ services:
       node.ingest: "false"
       discovery.seed_hosts: "src-master-1,src-master-2"
       cluster.initial_master_nodes: "src-master-1,src-master-2"
-      network.host: "0.0.0.0"
     volumes:
       - ./config/keystore-entrypoint.sh:/config/keystore-entrypoint.sh:ro
-      - src-master-2-data:/usr/share/elasticsearch/data
+      - src-master-2-data:/usr/share/opensearch/data
     depends_on:
       minio:
         condition: service_healthy
 
   src-data-1:
-    <<: *es-base
+    <<: *os-base
     container_name: src-data-1
     environment:
-      <<: *s3-env
-      ES_JAVA_OPTS: "-Xms${DATA_HEAP:-256m} -Xmx${DATA_HEAP:-256m}"
+      <<: [*os-base-env, *s3-env]
       cluster.name: source-cluster
       node.name: src-data-1
       node.master: "false"
@@ -148,22 +145,21 @@ services:
       node.ingest: "true"
       discovery.seed_hosts: "src-master-1,src-master-2"
       cluster.initial_master_nodes: "src-master-1,src-master-2"
-      network.host: "0.0.0.0"
     ports:
       - "9200:9200"
+      - "9600:9600"
     volumes:
       - ./config/keystore-entrypoint.sh:/config/keystore-entrypoint.sh:ro
-      - src-data-1-data:/usr/share/elasticsearch/data
+      - src-data-1-data:/usr/share/opensearch/data
     depends_on:
       - src-master-1
       - src-master-2
 
   src-data-2:
-    <<: *es-base
+    <<: *os-base
     container_name: src-data-2
     environment:
-      <<: *s3-env
-      ES_JAVA_OPTS: "-Xms${DATA_HEAP:-256m} -Xmx${DATA_HEAP:-256m}"
+      <<: [*os-base-env, *s3-env]
       cluster.name: source-cluster
       node.name: src-data-2
       node.master: "false"
@@ -171,20 +167,18 @@ services:
       node.ingest: "true"
       discovery.seed_hosts: "src-master-1,src-master-2"
       cluster.initial_master_nodes: "src-master-1,src-master-2"
-      network.host: "0.0.0.0"
     volumes:
       - ./config/keystore-entrypoint.sh:/config/keystore-entrypoint.sh:ro
-      - src-data-2-data:/usr/share/elasticsearch/data
+      - src-data-2-data:/usr/share/opensearch/data
     depends_on:
       - src-master-1
       - src-master-2
 
   src-data-3:
-    <<: *es-base
+    <<: *os-base
     container_name: src-data-3
     environment:
-      <<: *s3-env
-      ES_JAVA_OPTS: "-Xms${DATA_HEAP:-256m} -Xmx${DATA_HEAP:-256m}"
+      <<: [*os-base-env, *s3-env]
       cluster.name: source-cluster
       node.name: src-data-3
       node.master: "false"
@@ -192,24 +186,23 @@ services:
       node.ingest: "true"
       discovery.seed_hosts: "src-master-1,src-master-2"
       cluster.initial_master_nodes: "src-master-1,src-master-2"
-      network.host: "0.0.0.0"
     volumes:
       - ./config/keystore-entrypoint.sh:/config/keystore-entrypoint.sh:ro
-      - src-data-3-data:/usr/share/elasticsearch/data
+      - src-data-3-data:/usr/share/opensearch/data
     depends_on:
       - src-master-1
       - src-master-2
 
-  src-kibana:
-    image: docker.elastic.co/kibana/kibana-oss:7.10.2
-    platform: linux/amd64
-    container_name: src-kibana
+  src-dashboards:
+    image: opensearchproject/opensearch-dashboards:1.3.14
+    container_name: src-dashboards
     ports:
       - "5601:5601"
     environment:
-      ELASTICSEARCH_HOSTS: '["http://src-data-1:9200"]'
+      OPENSEARCH_HOSTS: '["http://src-data-1:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
     networks:
-      - es-net
+      - opensearch-net
     depends_on:
       - src-data-1
       - src-data-2
@@ -217,13 +210,12 @@ services:
     restart: unless-stopped
 
 # ── TARGET CLUSTER ────────────────────────────────────────────────────────────
-
   tgt-master-1:
-    <<: *es-base
+    <<: *os-base
     container_name: tgt-master-1
     environment:
-      <<: *s3-env
-      ES_JAVA_OPTS: "-Xms${MASTER_HEAP:-192m} -Xmx${MASTER_HEAP:-192m}"
+      <<: [*os-base-env, *s3-env]
+      OPENSEARCH_JAVA_OPTS: "-Xms${MASTER_HEAP:-192m} -Xmx${MASTER_HEAP:-192m}"
       cluster.name: target-cluster
       node.name: tgt-master-1
       node.master: "true"
@@ -231,21 +223,20 @@ services:
       node.ingest: "false"
       discovery.seed_hosts: "tgt-master-1,tgt-master-2"
       cluster.initial_master_nodes: "tgt-master-1,tgt-master-2"
-      network.host: "0.0.0.0"
       reindex.remote.whitelist: "src-data-1:9200,src-data-2:9200,src-data-3:9200"
     volumes:
       - ./config/keystore-entrypoint.sh:/config/keystore-entrypoint.sh:ro
-      - tgt-master-1-data:/usr/share/elasticsearch/data
+      - tgt-master-1-data:/usr/share/opensearch/data
     depends_on:
       minio:
         condition: service_healthy
 
   tgt-master-2:
-    <<: *es-base
+    <<: *os-base
     container_name: tgt-master-2
     environment:
-      <<: *s3-env
-      ES_JAVA_OPTS: "-Xms${MASTER_HEAP:-192m} -Xmx${MASTER_HEAP:-192m}"
+      <<: [*os-base-env, *s3-env]
+      OPENSEARCH_JAVA_OPTS: "-Xms${MASTER_HEAP:-192m} -Xmx${MASTER_HEAP:-192m}"
       cluster.name: target-cluster
       node.name: tgt-master-2
       node.master: "true"
@@ -253,21 +244,19 @@ services:
       node.ingest: "false"
       discovery.seed_hosts: "tgt-master-1,tgt-master-2"
       cluster.initial_master_nodes: "tgt-master-1,tgt-master-2"
-      network.host: "0.0.0.0"
       reindex.remote.whitelist: "src-data-1:9200,src-data-2:9200,src-data-3:9200"
     volumes:
       - ./config/keystore-entrypoint.sh:/config/keystore-entrypoint.sh:ro
-      - tgt-master-2-data:/usr/share/elasticsearch/data
+      - tgt-master-2-data:/usr/share/opensearch/data
     depends_on:
       minio:
         condition: service_healthy
 
   tgt-data-1:
-    <<: *es-base
+    <<: *os-base
     container_name: tgt-data-1
     environment:
-      <<: *s3-env
-      ES_JAVA_OPTS: "-Xms${DATA_HEAP:-256m} -Xmx${DATA_HEAP:-256m}"
+      <<: [*os-base-env, *s3-env]
       cluster.name: target-cluster
       node.name: tgt-data-1
       node.master: "false"
@@ -275,23 +264,22 @@ services:
       node.ingest: "true"
       discovery.seed_hosts: "tgt-master-1,tgt-master-2"
       cluster.initial_master_nodes: "tgt-master-1,tgt-master-2"
-      network.host: "0.0.0.0"
       reindex.remote.whitelist: "src-data-1:9200,src-data-2:9200,src-data-3:9200"
     ports:
       - "9201:9200"
+      - "9601:9600"
     volumes:
       - ./config/keystore-entrypoint.sh:/config/keystore-entrypoint.sh:ro
-      - tgt-data-1-data:/usr/share/elasticsearch/data
+      - tgt-data-1-data:/usr/share/opensearch/data
     depends_on:
       - tgt-master-1
       - tgt-master-2
 
   tgt-data-2:
-    <<: *es-base
+    <<: *os-base
     container_name: tgt-data-2
     environment:
-      <<: *s3-env
-      ES_JAVA_OPTS: "-Xms${DATA_HEAP:-256m} -Xmx${DATA_HEAP:-256m}"
+      <<: [*os-base-env, *s3-env]
       cluster.name: target-cluster
       node.name: tgt-data-2
       node.master: "false"
@@ -299,21 +287,19 @@ services:
       node.ingest: "true"
       discovery.seed_hosts: "tgt-master-1,tgt-master-2"
       cluster.initial_master_nodes: "tgt-master-1,tgt-master-2"
-      network.host: "0.0.0.0"
       reindex.remote.whitelist: "src-data-1:9200,src-data-2:9200,src-data-3:9200"
     volumes:
       - ./config/keystore-entrypoint.sh:/config/keystore-entrypoint.sh:ro
-      - tgt-data-2-data:/usr/share/elasticsearch/data
+      - tgt-data-2-data:/usr/share/opensearch/data
     depends_on:
       - tgt-master-1
       - tgt-master-2
 
   tgt-data-3:
-    <<: *es-base
+    <<: *os-base
     container_name: tgt-data-3
     environment:
-      <<: *s3-env
-      ES_JAVA_OPTS: "-Xms${DATA_HEAP:-256m} -Xmx${DATA_HEAP:-256m}"
+      <<: [*os-base-env, *s3-env]
       cluster.name: target-cluster
       node.name: tgt-data-3
       node.master: "false"
@@ -321,25 +307,24 @@ services:
       node.ingest: "true"
       discovery.seed_hosts: "tgt-master-1,tgt-master-2"
       cluster.initial_master_nodes: "tgt-master-1,tgt-master-2"
-      network.host: "0.0.0.0"
       reindex.remote.whitelist: "src-data-1:9200,src-data-2:9200,src-data-3:9200"
     volumes:
       - ./config/keystore-entrypoint.sh:/config/keystore-entrypoint.sh:ro
-      - tgt-data-3-data:/usr/share/elasticsearch/data
+      - tgt-data-3-data:/usr/share/opensearch/data
     depends_on:
       - tgt-master-1
       - tgt-master-2
 
-  tgt-kibana:
-    image: docker.elastic.co/kibana/kibana-oss:7.10.2
-    platform: linux/amd64
-    container_name: tgt-kibana
+  tgt-dashboards:
+    image: opensearchproject/opensearch-dashboards:1.3.14
+    container_name: tgt-dashboards
     ports:
       - "5602:5601"
     environment:
-      ELASTICSEARCH_HOSTS: '["http://tgt-data-1:9200"]'
+      OPENSEARCH_HOSTS: '["http://tgt-data-1:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
     networks:
-      - es-net
+      - opensearch-net
     depends_on:
       - tgt-data-1
       - tgt-data-2

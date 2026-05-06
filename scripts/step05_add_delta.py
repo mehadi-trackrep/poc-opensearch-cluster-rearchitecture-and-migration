@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 import click
 from faker import Faker
-from elasticsearch.helpers import bulk
+from opensearchpy.helpers import bulk
 from rich.progress import track
 
 from scripts.common import (

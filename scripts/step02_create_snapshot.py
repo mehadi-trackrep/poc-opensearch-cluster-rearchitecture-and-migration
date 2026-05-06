@@ -4,7 +4,7 @@ Step 2 – Register an S3 (MinIO) snapshot repository on SOURCE and take a snaps
 Production:  set S3_ENDPOINT to your real AWS endpoint (or leave blank for AWS).
 Local POC:   S3_ENDPOINT=http://localhost:9000  →  MinIO running in Docker.
 
-The repository-s3 plugin is installed via Dockerfile on top of elasticsearch-oss:7.10.2.
+The repository-s3 plugin is installed via Dockerfile on top of opensearch:1.3.14.
 Credentials were injected into each node's keystore by keystore-entrypoint.sh
 at startup; here we only pass the non-secret settings (bucket, endpoint, etc.).
 

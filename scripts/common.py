@@ -4,7 +4,7 @@ import os
 import time
 
 from dotenv import load_dotenv
-from elasticsearch import Elasticsearch
+from opensearchpy import OpenSearch
 from rich.console import Console
 from rich.table import Table
 
@@ -12,12 +12,12 @@ load_dotenv()
 
 console = Console()
 
-# ES OSS 7.10 has no security plugin — no auth needed.
-# Set SECURITY_ENABLED=true only if you switch to the non-OSS image with X-Pack.
+# Security is disabled on both clusters (DISABLE_SECURITY_PLUGIN=true in compose).
+# Set SECURITY_ENABLED=true only if you re-enable the security plugin.
 _SECURITY_ENABLED = os.getenv("SECURITY_ENABLED", "false").lower() == "true"
 
 
-def get_client(host: str, port: int, user: str = "", password: str = "") -> Elasticsearch:
+def get_client(host: str, port: int, user: str = "", password: str = "") -> OpenSearch:
     kwargs = dict(
         hosts=[{"host": host, "port": port}],
         use_ssl=False,
@@ -26,15 +26,13 @@ def get_client(host: str, port: int, user: str = "", password: str = "") -> Elas
         timeout=30,
         retry_on_timeout=True,
         max_retries=3,
-        # Suppress the "Connecting to ... running elasticsearch" version warning
-        sniff_on_start=False,
     )
     if _SECURITY_ENABLED and user:
         kwargs["http_auth"] = (user, password)
-    return Elasticsearch(**kwargs)
+    return OpenSearch(**kwargs)
 
 
-def source_client() -> Elasticsearch:
+def source_client() -> OpenSearch:
     return get_client(
         host=os.getenv("SOURCE_HOST", "localhost"),
         port=int(os.getenv("SOURCE_PORT", "9200")),
@@ -43,7 +41,7 @@ def source_client() -> Elasticsearch:
     )
 
 
-def target_client() -> Elasticsearch:
+def target_client() -> OpenSearch:
     return get_client(
         host=os.getenv("TARGET_HOST", "localhost"),
         port=int(os.getenv("TARGET_PORT", "9201")),
@@ -52,14 +50,12 @@ def target_client() -> Elasticsearch:
     )
 
 
-def wait_for_green(client: Elasticsearch, label: str, timeout: int = 180) -> None:
+def wait_for_green(client: OpenSearch, label: str, timeout: int = 180) -> None:
     console.print(f"[yellow]Waiting for {label} to be green...[/yellow]")
     last_error = None
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            # Simple poll — no server-side wait_for_status so the HTTP call
-            # returns immediately and we see the real status (or error).
             health = client.cluster.health()
             status = health["status"]
             if status == "green":
@@ -75,7 +71,7 @@ def wait_for_green(client: Elasticsearch, label: str, timeout: int = 180) -> Non
     )
 
 
-def wait_for_yellow(client: Elasticsearch, label: str, timeout: int = 180) -> None:
+def wait_for_yellow(client: OpenSearch, label: str, timeout: int = 180) -> None:
     console.print(f"[yellow]Waiting for {label} to be available...[/yellow]")
     last_error = None
     deadline = time.time() + timeout
@@ -96,7 +92,7 @@ def wait_for_yellow(client: Elasticsearch, label: str, timeout: int = 180) -> No
     )
 
 
-def print_cluster_info(client: Elasticsearch, label: str) -> None:
+def print_cluster_info(client: OpenSearch, label: str) -> None:
     health = client.cluster.health()
     info = client.info()
     t = Table(title=f"{label} Cluster Info")
@@ -111,7 +107,7 @@ def print_cluster_info(client: Elasticsearch, label: str) -> None:
     console.print(t)
 
 
-def print_index_stats(client: Elasticsearch, index: str) -> None:
+def print_index_stats(client: OpenSearch, index: str) -> None:
     try:
         stats = client.indices.stats(index=index)
         count = client.count(index=index)["count"]
