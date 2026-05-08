@@ -13,12 +13,13 @@ dependencies = [
 ]
 
 [project.scripts]
-setup-source      = "scripts.step01_setup_source:main"
-create-snapshot   = "scripts.step02_create_snapshot:main"
-restore-snapshot  = "scripts.step03_restore_snapshot:main"
-reindex-target    = "scripts.step04_reindex_target:main"
-add-delta         = "scripts.step05_add_delta:main"
-remote-reindex    = "scripts.step06_remote_reindex:main"
+setup-source         = "scripts.step01_setup_source:main"
+create-snapshot      = "scripts.step02_create_snapshot:main"
+restore-snapshot     = "scripts.step03_restore_snapshot:main"
+reindex-target       = "scripts.step04_reindex_target:main"
+add-delta-to-source  = "scripts.add_delta_to_source:main"
+simulate-migration   = "scripts.simulate_live_migration:main"
+remote-reindex-delta = "scripts.step05_remote_reindex_for_delta:main"
 
 [build-system]
 requires = ["hatchling"]

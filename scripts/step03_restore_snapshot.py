@@ -4,8 +4,8 @@ Step 3 – Register the S3 (MinIO) repo on TARGET and restore the snapshot.
 Both clusters point at the same MinIO bucket; TARGET registers it as readonly
 so it can never accidentally overwrite a snapshot.
 
-The restored index is renamed to `orders-restored` so Step 4 can reindex it
-into `orders-v2` with new shard settings without touching the original name.
+The restored index is renamed to `mmh-poc-restored` so Step 4 can reindex it
+into `mmh-poc-v2` with new shard settings without touching the original name.
 
 Run:  uv run python -m scripts.step03_restore_snapshot
 """
@@ -59,8 +59,8 @@ def _wait_for_restore(client, index: str, timeout: int = 300) -> None:
 
 @click.command()
 @click.option("--repo",     default=lambda: os.getenv("SNAPSHOT_REPO_NAME", "s3-repo"))
-@click.option("--snapshot", default=lambda: os.getenv("SNAPSHOT_NAME", "orders-snapshot"))
-@click.option("--index",    default=lambda: os.getenv("SOURCE_INDEX", "orders"))
+@click.option("--snapshot", default=lambda: os.getenv("SNAPSHOT_NAME", "mmh-poc-snapshot"))
+@click.option("--index",    default=lambda: os.getenv("SOURCE_INDEX", "mmh-poc"))
 def main(repo: str, snapshot: str, index: str) -> None:
     restored_index = f"{index}{RESTORED_SUFFIX}"
     client = target_client()
@@ -94,7 +94,7 @@ def main(repo: str, snapshot: str, index: str) -> None:
             "indices":              index,
             "ignore_unavailable":   True,
             "include_global_state": False,
-            # Rename so it doesn't collide with any future live index named 'orders'
+            # Rename so it doesn't collide with the live index named 'mmh-poc'
             "rename_pattern":     index,
             "rename_replacement": restored_index,
             "index_settings": {
@@ -111,7 +111,7 @@ def main(repo: str, snapshot: str, index: str) -> None:
 
     doc_count = client.count(index=restored_index)["count"]
     console.print(f"\n[bold]Restored {doc_count} docs into '{restored_index}'[/bold]")
-    console.print("[dim]Next: step04 — reindex into orders-v2 with new shard config[/dim]")
+    console.print("[dim]Next: step04 — reindex into mmh-poc-v2 with new shard config[/dim]")
 
 
 if __name__ == "__main__":

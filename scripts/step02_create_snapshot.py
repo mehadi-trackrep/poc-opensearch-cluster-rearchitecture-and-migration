@@ -68,8 +68,8 @@ def _wait_for_snapshot(client, repo_name: str, snapshot_name: str, timeout: int 
 
 @click.command()
 @click.option("--repo",     default=lambda: os.getenv("SNAPSHOT_REPO_NAME", "s3-repo"))
-@click.option("--snapshot", default=lambda: os.getenv("SNAPSHOT_NAME", "orders-snapshot"))
-@click.option("--index",    default=lambda: os.getenv("SOURCE_INDEX", "orders"))
+@click.option("--snapshot", default=lambda: os.getenv("SNAPSHOT_NAME", "mmh-poc-snapshot"))
+@click.option("--index",    default=lambda: os.getenv("SOURCE_INDEX", "mmh-poc"))
 @click.option("--wait/--no-wait", default=True)
 def main(repo: str, snapshot: str, index: str, wait: bool) -> None:
     client = source_client()

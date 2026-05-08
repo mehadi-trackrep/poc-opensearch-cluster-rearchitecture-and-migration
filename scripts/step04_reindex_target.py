@@ -1,9 +1,9 @@
 """
-Step 4 – Reindex `orders-restored` → `orders-v2` on TARGET with new shard settings.
+Step 4 – Reindex `mmh-poc-restored` → `mmh-poc-v2` on TARGET with new shard settings.
 
-Creates `orders-v2` with the desired shard/replica count (from .env), runs
-`_reindex`, verifies doc counts match, then creates an alias `orders` pointing
-to `orders-v2` so the application doesn't need to change its index name.
+Creates `mmh-poc-v2` with the desired shard/replica count (from .env), runs
+`_reindex`, verifies doc counts match, then creates an alias `mmh-poc` pointing
+to `mmh-poc-v2` so the application doesn't need to change its index name.
 
 Run:  uv run python -m scripts.step04_reindex_target
 """
@@ -23,13 +23,24 @@ from scripts.common import (
 SOURCE_SUFFIX = "-restored"
 
 
+DROP_FIELDS = {"contacts_designation_labels_2"}
+
+
 def _build_new_mapping(client, source_index: str) -> dict:
-    """Copy mappings from source_index and apply new shard settings."""
+    """Copy mappings from source_index, drop deprecated fields, apply new shard settings."""
     mapping = client.indices.get_mapping(index=source_index)[source_index]
     settings = client.indices.get_settings(index=source_index)[source_index]["settings"]
+
+    # Remove fields that should not exist in the new index
+    props = mapping["mappings"].get("properties", {})
+    for field in DROP_FIELDS:
+        if field in props:
+            del props[field]
+            console.print(f"[yellow]Dropped field '{field}' from mmh-poc-v2 mapping[/yellow]")
+
     return {
         "settings": {
-            "number_of_shards":   int(os.getenv("TARGET_SHARDS", "5")),
+            "number_of_shards":   int(os.getenv("TARGET_SHARDS", "30")),
             "number_of_replicas": int(os.getenv("TARGET_REPLICAS", "1")),
             "refresh_interval":   "1s",
             # carry over any custom analyzers / filters
@@ -56,11 +67,11 @@ def _wait_for_task(client, task_id: str, timeout: int = 600) -> dict:
 
 
 @click.command()
-@click.option("--source-index", default=lambda: os.getenv("SOURCE_INDEX", "orders"))
-@click.option("--target-index", default=lambda: os.getenv("TARGET_INDEX_REINDEXED", "orders-v2"))
-@click.option("--alias",        default="orders-alias", show_default=True)
-@click.option("--shards",  default=lambda: int(os.getenv("TARGET_SHARDS",   "5")),  type=int)
-@click.option("--replicas", default=lambda: int(os.getenv("TARGET_REPLICAS", "1")), type=int)
+@click.option("--source-index", default=lambda: os.getenv("SOURCE_INDEX", "mmh-poc"))
+@click.option("--target-index", default=lambda: os.getenv("TARGET_INDEX_REINDEXED", "mmh-poc-v2"))
+@click.option("--alias",        default="mmh-poc", show_default=True)
+@click.option("--shards",   default=lambda: int(os.getenv("TARGET_SHARDS",   "30")), type=int)
+@click.option("--replicas", default=lambda: int(os.getenv("TARGET_REPLICAS", "1")),  type=int)
 def main(source_index: str, target_index: str, alias: str, shards: int, replicas: int) -> None:
     restored_index = f"{source_index}{SOURCE_SUFFIX}"
     client = target_client()
@@ -87,11 +98,18 @@ def main(source_index: str, target_index: str, alias: str, shards: int, replicas
         f"[green]✓ Created '{target_index}' with {shards} shards / {replicas} replicas[/green]"
     )
 
+    # Build Painless script to remove dropped fields so strict mapping doesn't reject docs
+    remove_stmts = " ".join(f"ctx._source.remove('{f}');" for f in DROP_FIELDS)
+
     # Kick off async reindex
     resp = client.reindex(
         body={
             "source": {"index": restored_index, "size": 1000},
             "dest":   {"index": target_index,   "op_type": "index"},
+            "script": {
+                "lang":   "painless",
+                "source": remove_stmts,
+            },
         },
         params={"wait_for_completion": "false", "refresh": "true"},
     )
