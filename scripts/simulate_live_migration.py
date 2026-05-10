@@ -60,9 +60,20 @@ class State:
         self.errors: list[str] = []
 
 
-def _make_doc(indexed_at: str) -> tuple[int, dict]:
-    orgno = random.randint(100_000, 999_999_999)
-    return orgno, {
+def _fetch_max_orgno(client, index: str) -> int:
+    resp = client.search(
+        index=index,
+        body={
+            "size": 0,
+            "aggs": {"max_orgno": {"max": {"field": "orgno"}}},
+        },
+    )
+    value = resp["aggregations"]["max_orgno"]["value"]
+    return int(value) if value is not None else 0
+
+
+def _make_doc(orgno: int, indexed_at: str) -> dict:
+    return {
         "orgno":          orgno,
         "company_name":   fake.company(),
         "contacts_designation_labels_2":  _random_designations(),
@@ -77,8 +88,10 @@ def _make_doc(indexed_at: str) -> tuple[int, dict]:
 # ── producer thread ───────────────────────────────────────────────────────────
 
 def _producer(client, index: str, count: int, min_d: float, max_d: float, st: State) -> None:
-    for _ in range(count):
-        orgno, doc = _make_doc(_now_iso())
+    next_orgno = _fetch_max_orgno(client, index) + 1
+    for i in range(count):
+        orgno = next_orgno + i
+        doc = _make_doc(orgno, _now_iso())
         try:
             client.index(index=index, id=str(orgno), routing=str(orgno), body=doc)
             with st.lock:
